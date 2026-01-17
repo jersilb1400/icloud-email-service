@@ -26,11 +26,15 @@ const ICLOUD_IMAP = {
 const ICLOUD_SMTP = {
   host: 'smtp.mail.me.com',
   port: 465,
-  secure: true,  // Use SSL directly instead of STARTTLS
-  connectionTimeout: 30000,  // 30 second connection timeout
+  secure: true,
+  connectionTimeout: 30000,
   greetingTimeout: 30000,
   socketTimeout: 60000
 };
+
+// Mailgun configuration for sending emails (set via Render environment variables)
+const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY;
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN;
 
 // Health check
 app.get('/', (req, res) => {
@@ -397,45 +401,57 @@ app.get('/search', async (req, res) => {
 });
 
 /**
- * POST /send - Send an email
+ * Send email via Mailgun HTTP API
+ */
+async function sendViaMailgun(from, to, subject, text, html, cc, bcc) {
+  const formData = new URLSearchParams();
+  formData.append('from', from);
+  formData.append('to', to);
+  formData.append('subject', subject);
+  if (text) formData.append('text', text);
+  if (html) formData.append('html', html);
+  if (cc) formData.append('cc', cc);
+  if (bcc) formData.append('bcc', bcc);
+  
+  const auth = Buffer.from(`api:${MAILGUN_API_KEY}`).toString('base64');
+  
+  const response = await fetch(`https://api.mailgun.net/v3/${MAILGUN_DOMAIN}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: formData.toString()
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Mailgun error: ${response.status} - ${errorText}`);
+  }
+  
+  return await response.json();
+}
+
+/**
+ * POST /send - Send an email via Mailgun
  * Body: { username, password, to, subject, text, html, cc, bcc }
  */
 app.post('/send', async (req, res) => {
-  const { username, password, to, subject, text, html, cc, bcc } = req.body;
-  
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Missing username or password' });
-  }
+  const { username, to, subject, text, html, cc, bcc } = req.body;
   
   if (!to || !subject) {
     return res.status(400).json({ error: 'Missing required fields: to, subject' });
   }
   
   try {
-    const transporter = nodemailer.createTransport({
-      ...ICLOUD_SMTP,
-      auth: {
-        user: username,
-        pass: password
-      }
-    });
-    
-    const mailOptions = {
-      from: username,
-      to,
-      subject,
-      text: text || '',
-      html: html || undefined,
-      cc: cc || undefined,
-      bcc: bcc || undefined
-    };
-    
-    const info = await transporter.sendMail(mailOptions);
+    // Use the user's iCloud email as the "from" address (via Mailgun)
+    const fromAddress = username || `noreply@${MAILGUN_DOMAIN}`;
+    const result = await sendViaMailgun(fromAddress, to, subject, text, html, cc, bcc);
     
     res.json({ 
       success: true, 
-      messageId: info.messageId,
-      message: 'Email sent successfully'
+      messageId: result.id,
+      message: 'Email sent successfully via Mailgun'
     });
   } catch (err) {
     console.error('Send error:', err.message);
@@ -548,17 +564,10 @@ app.post('/mcp', async (req, res) => {
       
       case 'send_email': {
         const { to, subject, text, html, cc, bcc } = params;
-        const transporter = nodemailer.createTransport({
-          ...ICLOUD_SMTP,
-          auth: { user: username, pass: password }
-        });
-        
-        const info = await transporter.sendMail({
-          from: username,
-          to, subject, text, html, cc, bcc
-        });
-        
-        return res.json({ result: { success: true, messageId: info.messageId } });
+        // Use Mailgun to send emails (more reliable than SMTP on cloud platforms)
+        const fromAddress = username || `noreply@${MAILGUN_DOMAIN}`;
+        const result = await sendViaMailgun(fromAddress, to, subject, text, html, cc, bcc);
+        return res.json({ result: { success: true, messageId: result.id } });
       }
       
       default:
