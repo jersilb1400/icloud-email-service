@@ -185,17 +185,28 @@ app.get('/emails', async (req, res) => {
     await imapConnect(imap);
     const box = await imapOpenBox(imap, mailbox);
     
-    // Get recent messages
-    const totalMessages = box.messages.total;
-    const startSeq = Math.max(1, totalMessages - parseInt(limit) + 1);
-    const range = `${startSeq}:${totalMessages}`;
-    
-    if (totalMessages === 0) {
+    if (box.messages.total === 0) {
       imap.end();
       return res.json({ success: true, emails: [], total: 0 });
     }
     
-    const rawMessages = await imapFetch(imap, range, {
+    // Search for recent emails (last 30 days) instead of using sequence numbers
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const uids = await imapSearch(imap, [['SINCE', thirtyDaysAgo]]);
+    
+    // Get the most recent ones (by UID, which correlates with arrival time)
+    const recentUids = uids.slice(-parseInt(limit));
+    
+    if (recentUids.length === 0) {
+      // Fallback: if no emails in last 30 days, get the last N by sequence
+      const totalMessages = box.messages.total;
+      const startSeq = Math.max(1, totalMessages - parseInt(limit) + 1);
+      recentUids.push(...Array.from({length: Math.min(parseInt(limit), totalMessages)}, (_, i) => startSeq + i));
+    }
+    
+    const rawMessages = await imapFetch(imap, recentUids, {
       bodies: '',
       struct: true
     });
@@ -452,16 +463,28 @@ app.post('/mcp', async (req, res) => {
         await imapConnect(imap);
         const box = await imapOpenBox(imap, mailbox);
         
-        const totalMessages = box.messages.total;
-        if (totalMessages === 0) {
+        if (box.messages.total === 0) {
           imap.end();
           return res.json({ result: { emails: [], total: 0 } });
         }
         
-        const startSeq = Math.max(1, totalMessages - parseInt(limit) + 1);
-        const range = `${startSeq}:${totalMessages}`;
+        // Search for recent emails (last 30 days) to get truly recent messages
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         
-        const rawMessages = await imapFetch(imap, range, { bodies: '', struct: true });
+        let uids = await imapSearch(imap, [['SINCE', thirtyDaysAgo]]);
+        
+        // Get the most recent ones
+        let recentUids = uids.slice(-parseInt(limit));
+        
+        // Fallback if no recent emails
+        if (recentUids.length === 0) {
+          const totalMessages = box.messages.total;
+          const startSeq = Math.max(1, totalMessages - parseInt(limit) + 1);
+          recentUids = Array.from({length: Math.min(parseInt(limit), totalMessages)}, (_, i) => startSeq + i);
+        }
+        
+        const rawMessages = await imapFetch(imap, recentUids, { bodies: '', struct: true });
         
         const emails = [];
         for (const raw of rawMessages) {
@@ -479,7 +502,7 @@ app.post('/mcp', async (req, res) => {
         
         emails.sort((a, b) => new Date(b.date) - new Date(a.date));
         imap.end();
-        return res.json({ result: { emails, total: totalMessages } });
+        return res.json({ result: { emails, total: uids.length } });
       }
       
       case 'search_emails': {
