@@ -50,16 +50,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Debug endpoint to check config (remove in production)
-app.get('/debug-config', (req, res) => {
-  res.json({
-    mailgun_domain_set: !!MAILGUN_DOMAIN,
-    mailgun_domain_value: MAILGUN_DOMAIN ? MAILGUN_DOMAIN.substring(0, 10) + '...' : 'NOT SET',
-    mailgun_api_key_set: !!MAILGUN_API_KEY,
-    mailgun_api_key_length: MAILGUN_API_KEY ? MAILGUN_API_KEY.length : 0
-  });
-});
-
 // Helper: Create IMAP connection
 function createImapConnection(username, password) {
   return new Imap({
