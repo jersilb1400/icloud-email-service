@@ -25,9 +25,11 @@ const ICLOUD_IMAP = {
 
 const ICLOUD_SMTP = {
   host: 'smtp.mail.me.com',
-  port: 587,
-  secure: false,
-  requireTLS: true
+  port: 465,
+  secure: true,  // Use SSL directly instead of STARTTLS
+  connectionTimeout: 30000,  // 30 second connection timeout
+  greetingTimeout: 30000,
+  socketTimeout: 60000
 };
 
 // Health check
